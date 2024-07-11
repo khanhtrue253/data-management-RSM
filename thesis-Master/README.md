@@ -1,6 +1,6 @@
 ## Description
 
-The Master thesis is an project conducted independently or with the supervision of a company, in order to find solutions for a business analytics challenge. 
+The Master thesis is a 4-month project conducted independently or with the supervision of a company, in order to find solutions for a business analytics challenge. 
 
 My thesis worked on the online assortment optimization on a two-sided platform - a common design for e-commerce platform connecting users/consumers with suppliers who provides service (e.g Fiverr, freelance work platforms, etc.) The platform is characterized by preferences coming from both sides of platform, and the platform needs to maximize outcome by selecting an appropriate assortment (first/second/third/N page results) to show to the side of customers.
 i
