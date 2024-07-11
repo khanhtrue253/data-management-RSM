@@ -1,0 +1,850 @@
+---
+title: "MLLA Group Assignment"
+output: 
+  html_document: 
+    fig_caption: yes
+date: "2023-12-13"
+---
+Group 14
+Daniel Leung, Emina Avgović, Karol Krawiecki, Khanh Chu
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load libraries and data
+```{r}
+library(tidymodels)
+library(tidyverse)
+library(tidyr)
+library(themis)
+library(dagitty)
+library(yardstick)
+library(skimr)
+library(doParallel)
+library(ranger)
+library(patchwork)
+library(xgboost)
+library(glmnet)
+library(ggplot2)
+
+```
+
+```{r}
+load("offers_censored.RData")
+source("./helpful_functions.R")
+```
+
+Start by creating new variables:
+
+1. DaysToOffer - which is the number of days that an applicant have to wait until they have their offer
+2. DaysToResponse - the number of days from getting an offer to response of an applicant. Note that this value can be NA.
+3. month variables for AppDate, OfferDate and ResponseDate.
+App4 seems to have {0,1,2,3,4} as values, so we also turn them into discrete, categorical variables
+
+```{r}
+#Feature engineering: Create new variables from the original dataset
+offers <- offers |>
+       mutate(App4 = as.factor(App4),
+              DaysToResponse = as.numeric(difftime(ResponseDate, OfferDate, units = "days")),
+              DaysToOffer = as.numeric(difftime(OfferDate, AppDate, units = "days")),
+              monthAppDate = as.factor(month(AppDate)),
+              monthOfferDate = as.factor(month(OfferDate)),
+              monthResponseDate = as.factor(month(ResponseDate)))
+```
+
+Splitting the dataset into prediction, final training, assessment, analysis. First, prediction and final training set:
+
+```{r}
+#Prediction & Final training split
+final_training_split <- make_appyear_split(offers, test_year = 2023)
+```
+
+Next is splitting final training further into assessment and analysis. To showcase empirical evidence of how we come to specific decision to split:
+
+We want, with the analysis and assessment sets, to replicate the deployment scenario. In that case, we have available data from previous years, but we don't have information after March 15 about Status. Thus, 2022 status is censored.
+To decide whether or not we should include both AY20 and AY21 in our analysis, we compare the distribution of these two years in terms of enrolment rate (per program). This is a jump forward to assumptions part, but we assume from here already that demographic information of applicants stay stable over the years
+
+```{r}
+#Visualizing enrolment rate in 2020 & 2021 - based on program to determine Analysis & Assessment set
+year_2021 <- ggplot(subset(offers, AppYear == 2021),aes(x = Program, fill = Status)) +
+     geom_bar(position = "fill") +
+     scale_y_continuous(labels = scales::percent_format()) +
+     labs(title = "Year: 2021",
+          x = "Program",
+          y = "Count") +
+     theme_minimal()
+
+year_2020 <- ggplot(subset(offers, AppYear == 2020),aes(x = Program, fill = Status)) +
+     geom_bar(position = "fill") +
+     scale_y_continuous(labels = scales::percent_format()) +
+     labs(title = "Year: 2020",
+          x = "Program",
+          y = "Count") +
+     theme_minimal()
+
+year_2020 + year_2021 + plot_layout(nrow = 2)
+```
+Most programs have somewhat stable enrolment rate over two years. Logically speaking, we don't expect too much shift in enrolment rate over two years (same on all other variables). Thus, include both year means more data to analyze, and we include both in our analysis set.
+
+```{r}  
+#Analysis and assessment set
+analysis_assessment_split <-
+  offers |>
+  filter(AppYear <= 2022) |>
+  #Censor & Drop post March 15 predictions
+  censor_post_prediction_responses(years = 2022) |>
+  drop_post_prediction_offers(years = 2022) |>
+  make_appyear_split(test_year = 2022)
+
+#Collect all datasets used in the case
+Final_training <- training(final_training_split)
+Prediction <- testing(final_training_split)
+Analysis <- training(analysis_assessment_split)
+Assessment <- testing(analysis_assessment_split)
+
+#Data in analysis set is imbalanced towards positive class (enrolled). This will affect our decision choice later.
+Analysis |>
+  group_by(Status) |>
+  summarize(n = n())
+```  
+
+Exploratory data analysis of the analysis set, by plotting distribution of variables on Status:
+
+```{r}
+#Get the columns that are categorical from the set
+non_categorical_colums <- c("AppDate", "OfferDate", "ResponseDate", "DaysToOffer", "DaysToResponse", "Status")
+categorical_columns <- setdiff(names(Analysis), non_categorical_colums)
+
+#Initiate the list for plots
+plots_list <- list()
+
+#Loop through all categorical columns to create plot, with counts and fill of status.
+for(col in categorical_columns) {
+     plot <- ggplot(Analysis, aes(x = .data[[col]], fill = Status)) +
+         geom_bar() +
+         geom_text(stat = "count", aes(label = ..count..), position = position_stack(vjust = 0.5)) +
+         labs(title = "Distribution of Status",
+              x = col,
+              y = "Count") +
+         theme_minimal()
+
+     plots_list[[col]] <- plot
+}
+
+plots_list
+```
+
+Density plot for numeric variables
+
+```{r}
+#Explore numerical variables in the Analysis set
+ggplot(Analysis, aes(x = DaysToOffer, fill = Status)) +
+     geom_density(alpha = 0.5) +
+     theme_bw()
+
+ggplot(Analysis, aes(x = DaysToResponse, fill = Status)) +
+  geom_density(alpha = 0.5) +
+  theme_bw()
+```
+
+Following variables will not be useful when predicting enrolment:
+Demo1 (same proportion across categories)
+Demo3 (too many categories, low count)
+Edu1 (too many categories, low count, unsure)
+Edu2 (too many categories, low count, unsure)
+Edu3 (most observations are in B -> severe category imbalance)
+App1 (same proportion across categories)
+App2 (same proportion across categories, some categories low count)
+DaysToOffer (overlapping density)
+
+Following variables will be useful when predicting enrolment:
+Demo2 (some degree of category imbalance, but adequate category size & different rate)
+App4 (Three categories with highest count has varied rate)
+HowFirstHeard (adequate size, varied rate). Interesting insights for real life: active information seeking, word of mouth and current/past exposure increases chance that the person will enroll at RSM. Passive/cold application (representative, MKT, social media, external, ranking) are more likely to not enroll
+Program: (Not clear statistical-wise, but can be logical-wise.)
+DaysToResponse: (Difference in density can be seen clearly)
+
+Compact data summary:
+
+```{r}  
+Analysis |>
+     skim()
+```
+
+Regardless of observation, the following fact holds:
+
+Not all variables are useful when predicting enrolment rate. This means that our analysis will have to lean towards some sort of subset selection.
+Many of the variables have too much categories, with little count. this complicates potential interaction effects between variables and, as you will see below when we run the model, we did not consider interaction terms. If the best subset is suitable we might update this, but for now, it's not there.
+
+
+Before moving from data exploration to models building, we have to acknowledge assumptions we are making in order to build these models and make predictions.
+```{r}
+DAG <- dagitty('dag {
+               Any_Demo -> Program
+               Any_Edu -> Program
+               Program -> HowFirstHeard
+               Any_Demo -> HowFirstHeard
+               Any_Edu -> HowFirstHeard
+               HowFirstHeard -> Any_App
+               Any_Demo -> Status
+               Any_Edu -> Status
+               Program -> Status
+               HowFirstHeard -> Status
+               Any_App -> Status
+               Any_Demo -> Any_Edu
+               Program -> Any_Month
+               HowFirstHeard -> Any_Month
+               Any_Edu -> Any_Month
+               Any_Demo -> Any_Month
+               Any_Month -> Any_App
+               Any_Month -> Status}')
+plot(graphLayout(DAG))
+```
+
+[Any_...] variables are used as placeholders for smaller variables (e.g: Edu1/2/3 -> Any_Edu). This DAG is NOT intended to convey information about causal effect (since we have limited information about it), but rather a placeholder to represent the latent process that the algorithm used to predict Status.
+
+However, this DAG helps us visualize the assumptions we are willing to make in order to predict Status based on all predictors. Recognizing these assumptions help us recognize potential pitfalls that might occur when we apply the model from training data to predictions, due to the fact that our assumptions did not hold. Here are the assumptions:
+
+- Distributions reflecting all the predictors do not change over time (no error term exists in the DAG). We are assuming that variables' own distribution stay the same over time.
+- No unobserved factors between predictors, or predictor and Status. We are assuming there are no surprise factors (e.g: COVID-19, influx/deflux of certain information type) that changes factors & their relationship. Over the years, the joint distribution of each predictor and Status (and even joint distribution of predictors) is similar.
+- The DAG (arrows, mainly) stay stable, in depicted direction. The interaction (placeholdered as directed arrows) stay the same from training to testing. 
+
+Note: The data has signs of multicolinearity between categorical variables. However, we are leaning into business side here, with variables representing a distinct aspect of an applicant. They can be multicolinear, but they represent essential information that we need to predict status, and therefore should not be removed from model. Most models incorporate feature selection that we can lean into as well (elastic net, random forest, gradient boosting)  - instead of doing subset selection beforehand.
+
+##TUNING MODELS:
+Start by creating folds with strata based on outcome variable. Then specify the models.
+
+```{r}
+#Create folds
+set.seed(2503)
+cv_folds <- vfold_cv(Analysis, v = 10, strata = Status)
+
+#Specify models
+knn_model <-
+  nearest_neighbor(neighbors = tune()) |>
+  set_mode("classification") |>
+  set_engine("kknn")
+
+elastic_net_reg <-
+  logistic_reg(penalty = tune(), mixture = tune()) |>
+  set_engine("glmnet")
+
+rf_model <-
+  rand_forest(mtry = tune(), trees = 500) |>
+  set_mode("classification") |>
+  set_engine("ranger", importance = "permutation")
+
+gradient_model <-
+  boost_tree(
+    trees = tune(),
+    tree_depth = tune(),
+    learn_rate = tune(),
+    stop_iter = 500
+  ) |>
+  set_mode("classification") |>
+  set_engine("xgboost")
+```
+
+##Specifying recipes for the models.
+
+All recipes require categorical variables to be transformed into dummies, and missing values handled.
+- We handle missing values in DaysToResponse by taking the average of 5 nearest neighbors (simple heuristic, given how many combinations of data points can exist). Assuming no heterogeneity in DaysToResponse, this should be adequate to fill in missing values Real-life logic: We are looking at 5 applicants that responded, with most similar information as the one who didn't respond, to guess the number of days it would have taken for them to respond.
+
+Gradient boosting requires categorical variables to be one-hot encoded & need SMOTE-NC.
+Random forest needs SMOTE-NC.
+KNN and elastic net requires the numerical variables to be standardized
+
+SMOTE-NC stands for Synthetic Minority Upsampling Technique for Nominal and Categorical variable. Instead of down-sampling, we are creating artificial new points in "Not Enrolled" status, which compliments the current distribution of data in the minority class. We cannot down-sample, because recall from above in data exploration, there are many variables with very small category count. Downsampling runs the risk of losing information, and especially in this case, might mean many categories not existing - affecting the prediction power.
+
+```{r}
+#Gradient recipe
+gradient_recipe <-
+  recipe(Status ~ ., data = Analysis) |>
+  #update role for date-related variables and AppYear, since they cannot tribute to predicting Status
+  update_role(AppYear, AppDate, OfferDate, ResponseDate, new_role = "metadata") |>
+  #Handle missing values
+  step_impute_knn(DaysToResponse, monthResponseDate, neighbors = 5) |>
+  #One-hot-encode all but one variable
+  step_dummy(all_factor_predictors(), one_hot = TRUE) |>
+  #Upsampling
+  step_smotenc(neighbors = 3, seed = 2503)
+
+#Random forest recipe
+rf_recipe <-
+  recipe(Status ~ ., data = Analysis) |>
+  #update role for date-related variables and AppYear, since they cannot tribute to predicting Status
+  update_role(AppYear, AppDate, OfferDate, ResponseDate, new_role = "metadata") |>
+  #Handle missing values
+  step_impute_knn(DaysToResponse, monthResponseDate, neighbors = 5) |>
+  #Upsampling
+  step_smotenc(neighbors = 3, seed = 2503) |>
+  #One-hot-encode all but one variable
+  step_dummy(all_factor_predictors())
+
+
+#Nearest net is k-nearest neighbors & elastic net.
+nearest_net_recipe <-
+  recipe(Status ~ ., data = Analysis) |>
+  #update role for date-related variables and AppYear, since they cannot tribute to predicting Status
+  update_role(AppYear, AppDate, OfferDate, ResponseDate, new_role = "metadata") |>
+  #Handle missing values
+  step_impute_knn(DaysToResponse, monthResponseDate, neighbors = 5) |>
+  #Normalize the numeric variables
+  step_normalize(all_numeric_predictors()) |>
+  #One-hot-encode all but two variable
+  step_dummy(all_factor_predictors())
+```
+
+##Create all workflows
+
+```{r}
+gradient_wf <-
+  workflow() |>
+  add_recipe(gradient_recipe) |>
+  add_model(gradient_model)
+
+rf_wf <-
+  workflow() |>
+  add_recipe(rf_recipe) |>
+  add_model(rf_model)
+
+knn_wf <-
+  workflow() |>
+  add_recipe(nearest_net_recipe) |>
+  add_model(knn_model)
+
+elastic_net_wf <-
+  workflow() |>
+  add_recipe(nearest_net_recipe) |>
+  add_model(elastic_net_reg)
+
+#Call all models to check accuracy
+gradient_wf
+rf_wf
+knn_wf
+elastic_net_wf
+```
+
+##Our goals:
+- F1 score as primary measure, >= 90%
+- Sensitivity >= 90% (prevent cases of overestimation, forces F1 to balance between two metrics)
+- Precision is included because we want to see how F1 is calculated
+
+```{r}
+#prediction metric specification
+prediction_metrics <- metric_set(sensitivity, precision, f_meas, roc_auc)
+```
+
+```{r}  
+###Tuning for KNN###
+knn_grid <- grid_regular(neighbors(range = c(21, 80)), levels = 30)
+knn_grid
+knn_tune <- tune_grid(
+  knn_wf,
+  resamples = cv_folds,
+  grid = knn_grid,
+  metrics = prediction_metrics
+)
+
+#Collect metrics
+knn_metrics <-
+     knn_tune |>
+     collect_metrics()
+
+#Plot results
+knn_metrics |>
+     ggplot(aes(x = neighbors, y = mean)) +
+     geom_point() +
+     geom_line() +
+     facet_wrap(~.metric, scales = "free_y") +
+     theme_bw()
+
+#Select model within 1SE of highest performing model
+knn_best_model <-
+  knn_tune |>
+  select_by_one_std_err(metric = "f_meas", order_by = "neighbors", order_direction = "desc")
+
+#Finalize knn model
+knn_wf_final <-
+  knn_wf |>
+  finalize_workflow(knn_best_model)
+```
+
+```{r}
+###Tuning for elastic net regression###
+elastic_grid <- grid_regular(penalty(range = c(-1, 0), trans = log10_trans()),
+                              mixture(range = c(0, 1)),
+                              levels = list(penalty = 100, mixture = 10))
+
+elastic_tune <- tune_grid(
+  elastic_net_wf,
+  resamples = cv_folds,
+  grid = elastic_grid,
+  metrics = prediction_metrics
+)
+
+elastic_metrics <-
+     elastic_tune |>
+     collect_metrics()
+
+#Visualizing results
+#Pictures with the current grid is included.
+elastic_metrics |>
+    filter(.metric == "sensitivity") |>
+    ggplot(aes(
+        x = penalty, y = mean, colour = factor(mixture),
+        ymin = mean - std_err, ymax = mean + std_err
+    )) +
+    geom_pointrange(alpha = 0.5, size = .125) +
+    scale_x_log10() +
+    labs(y = "Sensitivity", x = expression(lambda), colour = expression(alpha)) +
+    theme_bw()
+
+elastic_metrics |>
+    filter(.metric == "precision") |>
+    ggplot(aes(
+        x = penalty, y = mean, colour = factor(mixture),
+        ymin = mean - std_err, ymax = mean + std_err
+    )) +
+    geom_pointrange(alpha = 0.5, size = .125) +
+    scale_x_log10() +
+    labs(y = "Precision", x = expression(lambda), colour = expression(alpha)) +
+    theme_bw()
+
+elastic_metrics |>
+    filter(.metric == "f_meas") |>
+    ggplot(aes(
+        x = penalty, y = mean, colour = factor(mixture),
+        ymin = mean - std_err, ymax = mean + std_err
+    )) +
+    geom_pointrange(alpha = 0.5, size = .125) +
+    scale_x_log10() +
+    labs(y = "f_meas", x = expression(lambda), colour = expression(alpha)) +
+    theme_bw()
+
+#Choose best model: Best sensitivity within 1SE of best model, highest precision value, highest penalty.
+elastic_1se_model <-
+  elastic_tune |>
+  select_by_one_std_err(metric = "f_meas", order_by = "penalty", order_direction = "desc")
+
+#Finalize the model
+elastic_net_wf_final <-
+  elastic_net_wf |>
+  finalize_workflow(elastic_1se_model)
+
+```
+
+```{r}
+###Tuning Random Forest###
+rf_grid <- grid_regular(mtry(range = c(1, 17)), levels = 17)
+
+#Parallel
+num_cores <- parallel::detectCores()
+doParallel::registerDoParallel(cores = num_cores - 1L)
+
+set.seed(1900561252)
+rf_tune <- tune_grid(
+  rf_wf,
+  resamples = cv_folds,
+  grid = rf_grid,
+  metrics = prediction_metrics
+)
+```
+
+```{r}
+#Plotting results
+rf_metrics <- rf_tune |>
+  collect_metrics()
+
+rf_metrics |>
+  filter(.metric %in% c("sensitivity", "precision")) |>
+  ggplot(aes(
+    x = mtry, y = mean, ymin = mean - std_err,
+    ymax = mean + std_err,
+    colour = .metric
+  )) +
+  geom_errorbar() +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~.metric, ncol = 1, scales = "free_y") +
+  guides(colour = "none") +
+  theme_bw()
+
+```
+
+```{r}
+#Choose best model and finalize
+rf_best_model <-
+    rf_tune |>
+    select_best(metric = "f_meas")
+
+rf_wf_final <-
+  rf_wf |>
+  finalize_workflow(rf_best_model)
+```
+
+```{r}
+###Tuning Gradient Boosting###
+gradient_grid <- crossing(
+  trees = 500 * 1:10,
+  learn_rate = c(0.1, 0.01, 0.001),
+  tree_depth = c(1, 2, 3)
+)
+
+gradient_tune <- tune_grid(
+  gradient_wf,
+  resamples = cv_folds,
+  grid = gradient_grid,
+  metrics = prediction_metrics
+)
+
+gradient_metrics <-
+  gradient_tune |>
+  collect_metrics()
+```
+
+```{r}
+#Plotting results
+gradient_tune |>
+    collect_metrics() |>
+    filter(.metric %in% c("sensitivity", "f_meas")) |>
+    ggplot(aes(x = trees, y = mean, colour = .metric)) +
+    geom_path() +
+    facet_grid(learn_rate ~ tree_depth, labeller = label_both) +
+    scale_colour_manual(values = c("#D55E00", "#0072B2")) +
+    theme_bw() +
+    labs(y = NULL) +
+    theme(
+        legend.position = c(.98, .2),
+        legend.justification = c(1, 0),
+        legend.background = element_rect(colour = "black")
+    )
+
+gradient_metrics |>
+    filter(learn_rate <= 0.01 & tree_depth >= 2 & trees <= 5000) |>
+    select(trees:learn_rate, .metric, mean) |>
+    pivot_wider(
+        id_cols = trees:learn_rate,
+        names_from = .metric,
+        values_from = mean
+    ) |>
+    ggplot() +
+    aes(
+        x = precision, y = sensitivity,
+        colour = factor(trees, ordered = TRUE),
+        size = learn_rate
+    ) +
+    geom_point() +
+    facet_wrap(~tree_depth, ncol = 1, labeller = label_both) +
+    scale_size_continuous(range = c(2, 4), breaks = 10^c(-3, -2)) +
+    scale_colour_viridis_d(begin = .3, end = .9, option = "E") +
+    theme_bw() +
+    labs(colour = "trees")
+
+gradient_metrics |>
+    filter(learn_rate == 0.010 & tree_depth == 2 & trees <= 5000) |>
+    select(trees:learn_rate, .metric, mean, std_err) |>
+    filter(.metric %in% c("sensitivity", "f_meas")) |>
+    mutate(low = mean - std_err, high = mean + std_err) |>
+    select(-std_err) |>
+    pivot_wider(
+        id_cols = trees:learn_rate,
+        names_from = .metric,
+        values_from = c(mean, low, high)
+    ) |>
+    select(trees, f_meas = mean_f_meas, ends_with("sensitivity")) |>
+    ggplot() +
+    aes(
+        x = f_meas,
+        y = mean_sensitivity, ymin = low_sensitivity, ymax = high_sensitivity,
+        colour = factor(trees, ordered = TRUE)
+    ) +
+    geom_pointrange() +
+    geom_text(aes(label = trees), position = position_nudge(y = .01)) +
+    scale_colour_viridis_d(begin = .3, end = .95, option = "E") +
+    theme_bw() +
+    labs(colour = "trees")
+
+#Best model
+gradient_best <-
+  gradient_metrics |>
+  filter(tree_depth == 2, learn_rate == 0.01, trees == 500) |>
+  distinct(trees, tree_depth, learn_rate)
+gradient_wf_final <-
+  finalize_workflow(gradient_wf, gradient_best)
+```
+
+Fit each final model on the assessment set and collect tuning metrics
+
+```{r}
+knn_assess_fit <-
+     knn_wf_final |>
+     last_fit(analysis_assessment_split, metrics = prediction_metrics)
+
+knn_assess_metrics <-
+  knn_assess_fit |>
+  collect_metrics()
+
+elastic_net_assess_fit <-
+     elastic_net_wf_final |>
+     last_fit(analysis_assessment_split, metrics = prediction_metrics)
+
+elastic_net_assess_metrics <-
+     elastic_net_assess_fit |>
+     collect_metrics()
+
+rf_assess_fit <-
+    rf_wf_final |>
+    last_fit(analysis_assessment_split, metrics = prediction_metrics)
+
+rf_assess_metrics <-
+     rf_assess_fit |>
+     collect_metrics()
+
+gradient_assess_fit <-
+     gradient_wf_final |>
+     last_fit(analysis_assessment_split, metrics = prediction_metrics)
+
+gradient_assess_metrics <-
+     gradient_assess_fit |>
+     collect_metrics()
+```
+Print metrics for each model that has been trained and assessed on initial training/assessment set
+
+```{r}
+knn_assess_metrics
+elastic_net_assess_metrics
+rf_assess_metrics
+gradient_assess_metrics
+```
+Based on these results, the preferred model is the Elastic Net model.
+- The KNN model has too low of F1 score (understandable, we did not do subset selection for it)
+- Elastic net and gradient boosting model narrowly beats out random forest (0.001 difference), their performance are identical.
+- Given identical models, we prefer simpler ones -> Elastic Net is chosen.
+
+#Assessing expected test error of best model
+```{r}
+set.seed(2503)
+
+# Create a learning curve
+learning_curve <- tibble(Size = numeric(), AnalysisAccuracy = numeric(), AssessmentAccuracy = numeric())
+
+for (size in seq(121, nrow(Analysis), by = 100)) {
+    # Use a subset of the data for training
+    subset_data <- slice_sample(Analysis, n = size, replace = FALSE)
+    
+    # Fit the model
+    fit <- elastic_net_wf_final %>%
+        fit(data = subset_data)
+    
+    # Calculate accuracy on the Analysis set
+    analysis_accuracy <- fit %>%
+        predict(new_data = subset_data) %>%
+        bind_cols(subset_data) %>%
+        yardstick::accuracy(truth = Status, estimate = .pred_class) %>%
+        pull()
+    
+    # Calculate accuracy on the Assessment set
+    assessment_accuracy <- fit %>%
+        predict(new_data = Assessment) %>%
+        bind_cols(Assessment) %>%
+        yardstick::accuracy(truth = Status, estimate = .pred_class) %>%
+        pull()
+    
+    # Record the results
+    learning_curve <- bind_rows(learning_curve, tibble(Size = size, AnalysisAccuracy = analysis_accuracy, AssessmentAccuracy = assessment_accuracy))
+}
+
+#Visualize learning curve
+ggplot(learning_curve, aes(x = Size)) +
+     geom_line(aes(y = AnalysisAccuracy, color = "Training Accuracy"), size = 1) +
+     geom_line(aes(y = AssessmentAccuracy, color = "Validation Accuracy"), size = 1) +
+     labs(title = "Learning Curve", x = "Training Set Size", y = "Accuracy") +
+     theme_minimal()
+```
+
+##Retraining final model, generating predictions for AY2023
+
+```{r}
+# New recipe using final training data
+final_nearest_net_recipe <-
+  recipe(Status ~ ., data = Final_training) |>
+  #update role for date-related variables and AppYear, since they cannot tribute to predicting Status
+  update_role(AppYear, AppDate, OfferDate, ResponseDate, new_role = "metadata") |>
+  #Handle missing values
+  step_impute_knn(DaysToResponse, monthResponseDate, neighbors = 5) |>
+  #Normalize the numeric variables
+  step_normalize(all_numeric_predictors()) |>
+  #One-hot-encode all but two variable
+  step_dummy(all_factor_predictors())
+
+# Create final workflow
+final_elastic_net_wf <-
+  workflow() |>
+  add_recipe(final_nearest_net_recipe) |>
+  # same model as before
+  add_model(elastic_net_reg)
+```
+
+```{r}
+#Finalize the model with the tuning from analysis on 2020/2021 and assessment on 2022
+final_elastic_net_wf_final <-
+  final_elastic_net_wf |>
+  finalize_workflow(elastic_1se_model)
+final_elastic_net_wf_final
+```
+
+Fit final model and make predictions for AY2023
+
+```{r}
+final_elastic_net_prediction_fit <-
+     final_elastic_net_wf_final |>
+     last_fit(final_training_split, metrics = prediction_metrics)
+
+#final_elastic_net_prediction_metrics <-
+#     final_elastic_net_prediction_fit |>
+#     collect_metrics()
+```
+
+Show predictions for AY2023
+```{r}
+predicted_2023_enrollments <- final_elastic_net_prediction_fit |>
+  augment() |>
+  group_by(Program) |>
+  summarise(
+    Predicted_N = sum(.pred_Enrolled >= .5),
+    Predicted_Prob = mean(.pred_Enrolled)
+  )
+predicted_2023_enrollments
+
+#extra backup sent final enrollments
+#write.csv(predicted_2023_enrollments, "predicted_2023_enrollments_backup.csv")
+```
+
+```{r}
+load("offers_uncensored.RData") #load uncensored data
+offers <- offers |>
+       mutate(App4 = as.factor(App4),
+              DaysToResponse = as.numeric(difftime(ResponseDate, OfferDate, units = "days")),
+              DaysToOffer = as.numeric(difftime(OfferDate, AppDate, units = "days")),
+              monthAppDate = as.factor(month(AppDate)),
+              monthOfferDate = as.factor(month(OfferDate)),
+              monthResponseDate = as.factor(month(ResponseDate)))
+```
+
+```{r}
+#Separate 2023 data
+u_final_training_split <- make_appyear_split(offers, test_year = 2023)
+actual_2023_enrollments <- testing(u_final_training_split)
+```
+
+Set predictions against actual data overview
+```{r}
+final_predictions <- final_elastic_net_prediction_fit %>%
+  collect_predictions()
+final_predictions$Status <- actual_2023_enrollments$Status
+final_predictions$Program <- actual_2023_enrollments$Program
+final_predictions %>%
+  group_by(Program) %>%
+  summarise(
+    Actual_N = sum(Status == "Enrolled"),
+    Predicted_N = sum(.pred_Enrolled >= .5),
+    Predicted_Prob = mean(.pred_Enrolled)
+  )
+```
+
+##Calculate metrics, error analysis
+```{r}
+# Ensure the 'Status' column is a factor with correct levels
+final_predictions$Status <- factor(final_predictions$Status, levels = c("Enrolled", "Not enrolled"))
+
+#confusion matrix and metrics
+confusion_matrix <- conf_mat(final_predictions, truth = Status, estimate = .pred_class)
+print(confusion_matrix)
+final_metrics <- confusion_matrix %>%
+  summary() %>%
+  filter(.metric == "sens" | .metric == "precision" | .metric == "f_meas")
+print(final_metrics)
+
+```
+Feature extraction 
+
+```{r}
+final_elastic_net_prediction_fit %>%
+  extract_fit_parsnip() %>%
+  tidy() %>%
+  arrange(desc(abs(estimate)))
+```
+Only 14 (dummy) variables were relevant in predicting enrollment status, a lot lower than our 
+
+Wrong predictions overview
+
+```{r}
+wrong_predictions <- final_predictions %>%
+  filter(.pred_class != Status)
+
+# get observations we made wrong predictions on from offers
+wrong_predictions_full_info <- offers[wrong_predictions$.row,]
+
+# Plot bar chart of program against count of wrong predictions
+wrong_predictions %>% ggplot(aes(x = Program, fill = Status)) +
+    geom_bar() +
+    scale_y_continuous() +
+    labs(title = "Year: 2023",
+         x = "Program",
+         y = "Count") +
+    theme_minimal()
+
+# histogram of .pred_Enrolled for wrong predictions and small binwidth
+wrong_predictions %>%
+  ggplot(aes(x = .pred_Enrolled)) +
+  geom_histogram(binwidth = 0.05) +
+  labs(title = "Year: 2023",
+       x = "Predicted probability of enrollment",
+       y = "Count") +
+  theme_minimal()
+
+```
+
+
+# Further exploration
+
+```{r}
+plots_list2 <- list()
+
+for(col in categorical_columns) {
+     plot <- ggplot(wrong_predictions_full_info, aes(x = .data[[col]], fill = Status)) +
+         geom_bar() +
+         geom_text(stat = "count", aes(label = ..count..), position = position_stack(vjust = 0.5)) +
+         labs(title = "Distribution of Status",
+              x = col,
+              y = "Count") +
+         theme_minimal()
+
+     plots_list2[[col]] <- plot
+}
+plots_list2
+```
+
+
+```{r}
+
+plots_list3 <- list()
+non_categorical_colums2 <- c(".pred_Enrolled", ".pred_Not enrolled")
+categorical_columns2 <- setdiff(names(wrong_predictions), non_categorical_colums2)
+
+for(col in categorical_columns2) {
+     plot <- ggplot(wrong_predictions, aes(x = .data[[col]], fill = Status)) +
+         geom_bar() +
+         geom_text(stat = "count", aes(label = ..count..), position = position_stack(vjust = 0.5)) +
+         labs(title = "Distribution of Status",
+              x = col,
+              y = "Count") +
+         theme_minimal()
+
+     plots_list3[[col]] <- plot
+}
+plots_list3
+```
+
+
