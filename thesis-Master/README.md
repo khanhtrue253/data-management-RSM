@@ -1,3 +1,7 @@
+## Access
+
+A dedicated repo stores the materials for the thesis, which can be accessed [through this link](https://github.com/khanhtrue253/master-thesis)
+
 ## Description
 
 The Master thesis is a 4-month project conducted independently or with the supervision of a company, in order to find solutions for a business analytics challenge. 
@@ -11,7 +15,3 @@ After training the algorithm and perform testing on a simulation, it is shown th
   - Condensed queries from raw data sources that transform into statistics about tutor and student (for the purpose of prediction). For each pair of tutor-student, the stats are only collected up until their unique timestamps (in other words, temporal data for each data point).
   - Machine learning algorithms used and tested extensively, using Python & accompanying packages (most notably scikit-learn)
   - Exportation of the model artifacts, training data, test samples and parameters - making the model ready to be deployed in AWS Sagemaker and on the website, using AWS Sagemaker & REST API.
-  
-## Access
-
-A dedicated repo stores the materials for the thesis, which can be accessed [through this link](https://github.com/khanhtrue253/master-thesis)
