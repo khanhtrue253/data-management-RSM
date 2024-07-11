@@ -1,0 +1,51 @@
+---
+title: "Introduction"
+author: "Adam Chan, Khanh Chu, Shiyun Chen, Yuanling Zhu, Jing Jing He"
+date: "`r format(Sys.time(), '%Y-%m-%d at %H:%M:%S')`"
+output: 
+    bookdown::html_document2:
+        toc: true
+        toc_float: 
+            collapsed: false
+        number_sections: true
+        code_folding: show
+        theme: united
+        highlight: kate
+        fig_caption: yes
+        encoding: UTF-8
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup section_1, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(reactable)
+```
+
+
+## Research question
+
+What are the key dynamics and factors of Kiva projects that influence fundraising processes, and how can they be used to develop a model to predict future project successes?
+
+## Importance of Answering the RBQ
+
+Answering this RBQ is crucial for several reasons and benefits multiple stakeholders, including borrowers, Kiva as a platform, and lenders.
+
+**For Borrowers**: Knowing which features attract funding can help borrowers present their projects better. They are able to set realistic expectations about their projects' size and goals, which improves their chances of success. For instance, if detailed project descriptions and high-quality images are known to attract more funds, borrowers can focus on these aspects.
+
+**For Kiva**: Data-driven insights enable Kiva to offer personalized guidance to borrowers to enhance their chances of success, thus improving the platform's overall impact. Additionally, Kiva could better tailor their business strategy. They might prioritize the projects that are likely to successfully meet their fundraising goals, while supporting projects that are unlikely to be funded by showcasing them on the front page to increase attraction and engagement.
+
+**For Lenders**: Predictive tools assist lenders in deciding which projects are more likely to fulfill their funding goals, thereby enhancing investment decisions. For example, if certain projects are unlikely to meet their goals, lenders might consider supporting them more carefully or avoid potential setbacks.
+
+## Prior Research and Practices
+
+Prior research and business practices have consistently highlighted several key factors that significantly influence the success of crowdfunding and microfinance projects. These factors include project characteristics such as sector, amount requested, description text, duration of the fundraising campaign, use of multimedia (photos, videos), loan distribution, risk rating, profitability, and loan funding type (Belleflamme et al., 2014; Paruthi et al., 2016).
+
+In microfinance, borrower credibility, economic conditions, and the social impact of the project are crucial. Dorfleitner, Oswald, and Zhang (2021) found that projects with higher social impact scores attract more funding. Agier and Szafarz (2013) revealed a "glass ceiling" effect in loan sizes for female borrowers, underscoring the importance of demographic factors such as gender, age, location, education level, and economic background. Cultural and emotional factors also play a significant role. Park et al. (2020) demonstrated that culturally valued facial expressions enhance loan success, while Pengnate and Riggins (2020) found that the emotional tone of project descriptions significantly impacts funding outcomes.
+
+Although Kiva has conducted analyses on general success rates, there is potential to fully leverage predictive analytics for forecasting project outcomes by investigating the most updated lender preferences and the dynamic interactions between borrowers and lenders. Existing analyses may not deeply explore these areas, presenting an opportunity for deeper insights and improved predictive models (Bouncken et al., 2015; Cumming et al., 2019).
+
+In summary, integrating these insights from prior research provides a robust foundation for understanding the key features that contribute to the success of Kiva projects. This understanding can help develop more effective strategies for enhancing project presentations, supporting successful fundraising, and better engaging lenders.
+
+
+

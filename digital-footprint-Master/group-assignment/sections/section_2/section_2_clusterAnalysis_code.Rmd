@@ -1,0 +1,115 @@
+---
+title: "Cluster Analysis: Code"
+author: "Adam Chan, Khanh Chu, Shiyun Chen, Yuanling Zhu, Jing Jing He"
+date: "`r format(Sys.time(), '%Y-%m-%d at %H:%M:%S')`"
+output: 
+    bookdown::html_document2:
+        toc: true
+        toc_float: 
+            collapsed: false
+        number_sections: true
+        code_folding: show
+        theme: united
+        highlight: kate
+        fig_caption: yes
+        encoding: UTF-8
+        css: !expr here::here("style.css")
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r section_2_clusterAnalysis, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidymodels)
+library(tidyverse)
+library(NbClust)
+library(GGally)
+library(ggdendro)
+library(purrr)
+library(reactable)
+```
+
+The clustering process is depicted in the code chuck below. As seen from the graph, the WSS/TSS ratio flatlines at either 5 or 7 clusters. Given the snapshot of our observation, we will proceed with the smaller number of clusters, which is 5.
+
+```{r, inc-clusterAnalysis, class.source='fold-hide'} 
+clusterAnalysis_file_name <- here::here("sections", "section_2", "section_2_clusterAnalysis_clustering.R")
+clusterAnalysis_start_line <- 1
+clusterAnalysis_end_line <- 72
+
+
+knitr::read_chunk(
+  path = clusterAnalysis_file_name,
+  labels = "clusterAnalysis-params",
+  from = clusterAnalysis_start_line,
+  to = clusterAnalysis_end_line
+)
+
+file_in_repo <- stringr::str_sub(
+  clusterAnalysis_file_name,
+  start = stringr::str_locate(clusterAnalysis_file_name, "/section_2_clusterAnalysis_clustering.R")[1, "start"]
+)
+``` 
+
+```{r, clusterAnalysis-params, eval = FALSE, echo = TRUE} 
+``` 
+
+
+
+From here, we will extract summary statistics from these clusters. The numerical means of clusters will be presented in a compact table, while the value count of categorical values is presented cluster-by-cluster. We will add our observations about the clusters along with the categorical count.
+
+```{r}
+load(here::here("sections", "section_2", "clusters.Rdata"))
+
+# Function to summarize numerical data and count observations in a cluster
+summarize_cluster_numerical <- function(cluster_number, data) {
+  numerical_summary <- data %>%
+    filter(cluster == cluster_number) %>%
+    select(where(is.numeric), -loan_id) %>%
+    summarise_all(list(mean = ~ mean(., na.rm = TRUE)))
+  
+  count_summary <- data %>%
+    filter(cluster == cluster_number) %>%
+    summarise(count = n()) %>%
+    rename(number_of_observations = count)
+  
+  summary <- bind_cols(numerical_summary, count_summary) %>%
+    mutate(cluster = cluster_number)
+  
+  return(summary)
+}
+
+# Generate summaries for clusters 1 to 5
+numeric_stats <- map_dfr(1:5, ~ summarize_cluster_numerical(.x, final)) %>%
+  pivot_longer(cols = -cluster, names_to = "variable", values_to = "value") %>%
+  pivot_wider(names_from = cluster, values_from = value, names_prefix = "cluster_")
+
+print(numeric_stats)
+```
+
+General trends within the clusters: Generally they have fairly equal average `fundedAmount` at the time of scraping - regardless of how many days they have been available for donations. This, however, does not indicate an equality between projects: Some are getting funding quicker, while others take more time to reach their current funded amount. A project's research score seems to have a positive relationship with funding speed: The higher that score is, the less time project needs to reach its current funding amount. Sentiment, \# of repayment terms, and loanAmount are on average close between clusters except for one - usually making them the distinguishing factor of that cluster.
+
+```{r}
+#Summarize categorical features
+summarize_cluster_categorical <- function(cluster_number, data) {
+  filtered_data <- data %>%
+    filter(cluster == cluster_number) %>%
+    select(where(is.factor), -cluster)
+  
+  summary_data <- lapply(filtered_data, function(col) {
+    table_col <- table(col)
+    table_col[table_col != 0]  # Remove values that are 0
+  })
+  
+  return(summary_data)
+}
+
+cluster_summaries <- list()
+
+for (i in 1:5) {
+  cluster_summary <- summarize_cluster_categorical(i, final)
+  cluster_summaries[[i]] <- cluster_summary
+}
+
+# save(cluster_summaries, file = here::here("sections", "section_2", "ClusterAnalysis_clusterSummaries.RData"))
+```
+

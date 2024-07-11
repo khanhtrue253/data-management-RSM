@@ -1,0 +1,9 @@
+/* Define a custom class for tab sets */
+.custom-tabset {
+  border: 2px solid #9EC6C6; /* Change border color and width as needed */
+  padding: 10px;
+  border-radius: 15px; /* Add rounded corners */
+  background-color: #FFFFFF; /* Optional: add a background color */
+  margin: 10px 0; /* Optional: add margin around the tab sets */
+}
+
