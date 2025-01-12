@@ -1,0 +1,94 @@
+---
+title: "Cluster Analysis: Interpretation"
+author: "Adam Chan, Khanh Chu, Shiyun Chen, Yuanling Zhu, Jing Jing He"
+date: "`r format(Sys.time(), '%Y-%m-%d at %H:%M:%S')`"
+output: 
+    bookdown::html_document2:
+        toc: true
+        toc_float: 
+            collapsed: false
+        number_sections: true
+        code_folding: show
+        theme: united
+        highlight: kate
+        fig_caption: yes
+        encoding: UTF-8
+        css: !expr here::here("style.css")
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+load(here::here("sections", "section_2", "ClusterAnalysis_clusterSummaries.RData"))
+library(tidymodels)
+library(tidyverse)
+library(NbClust)
+library(GGally)
+library(ggdendro)
+library(purrr)
+library(reactable)
+```
+
+We can now start interpreting individual clusters, which we will only do based on the highlighting characteristics.
+
+#### Cluster 1
+
+```{r}
+print(cluster_summaries[[1]])
+```
+
+Cluster 1 has average sentiment score in description that is highest among five clusters, while the average loanAmount is lowest. Given the lowest average amount, and second-highest average researchScore, it is surprising to see that the projects are only moderately funded, even after a moderate period of time has passed (compared to other clusters).
+
+Most observations in this cluster (661, 10.1% of sample) comes from three countries: Kenya, an East Africa country; El Salvador, a country in Central America; and Fiji, an island country in Oceania. Interestingly, all but one project from Fiji belongs to this cluster - perhaps this shows the homogeneity in project purpose of which Kiva loans are supporting, homogeneity in needs and desires of Fiji residents, or simply because one organization was handling the projects from this country. Meanwhile, Kenya and El Salvador are among the top 10 countries supported by Kiva, both in number of projects and the total amount.The funds go to Agriculture or Food - two most popular sectors coming from projects of this snapshot.
+
+If we were to describe projects within this cluster, possible labels would be "**Sentimental, small ask, slow supported, Good community impacts, Famine needs**".
+
+#### Cluster 2
+
+```{r}
+print(cluster_summaries[[2]])
+```
+
+Arguably the most prestige clusters among the five, this cluster has high percentage of loan funded, even with high loanAmount and it has only been mere days since they started fundraising. They are also projects with very high community impact, evidenced through the researchScore. It can explain why even with high repaymentTerms (lenders take longer to get their money back), the projects are still being supported.
+
+Men lendees overcrowds women lendees in this group, although due to the size (69, \~1%) it doesn't matter - and so is the country and sector composition.
+
+If we were to describe projects within this cluster, possible labels would be "**Prestige projects, High community impact, Large amounts and quickly funded**".
+
+#### Cluster 3
+
+```{r}
+print(cluster_summaries[[3]])
+```
+
+Cluster 3 has averages that point to good-outcome projects - although the extent is behind elite projects of cluster 2. Sentiment and average loanAmount is only behind cluster 1, shortest average repaymentTerm, and middle-of-the-crop of other averages.
+
+It also consists of projects coming from many countries. Notably, for the four countries that comprises a large portion of this cluster - Philippines, Senegal, Tajikistan, Kyrgyzstan - the projects often (if not always) fall within this cluster or cluster 5 - implying that the two clusters contains a similar construction. A good portion (if not all) projects in sectors Arts, Housing and Entertainment platform-wide are within this cluster, suggesting that the cluster may be leaning towards recreational/livelihood improvements.
+
+If we were to describe projects within this cluster, possible labels would be "**Typical/Good projects, recreational/livelihood and needs improvements**".
+
+#### Cluster 4
+
+```{r}
+print(cluster_summaries[[4]])
+```
+
+Cluster 4 is characterized by the higher average number of days from project opening to data scraping. With an average fundedAmount percentage, this is the group that is funded the slowest (on average, the projects here get \~1% of the loanAmount funded every day). All project have \~35 days on the platform, thus this project is most likely to be under-funded. It also has significantly low researchScore, indicating it has low community impact or positive social outcomes.
+
+Half of the projects in this cluster are from men, noteworthy due to the size of cluster (1034, 15.9%) and the fact that platform-wide 80% of projects are from women. Service and retail are almost close to prominent in this cluster as Agriculture and Food, even if platform-wide they appear much less often than the compared sectors.
+
+If we were to describe projects within this cluster, possible labels would be "**Slow projects, Personal ask/Low community impact, Gender-aware, Service and needs sectors**".
+
+
+#### Cluster 5
+
+```{r}
+print(cluster_summaries[[5]])
+```
+
+As a large cluster (over 50% of the observations), cluster 5 has fairly average numeric statistics, which are usually in the middle-lower end of spectrum across clusters.
+
+In countries that have cases in cluster 3, there are also cases in cluster 5. Cluster 5 is also most diverse in terms of countries - suiting for the number of cases, there are 33 distinct countries in this cluster.Projects from Togo and Liberia (West African countries) even belongs completely to this cluster, even if they have \>100 cases. Clothing, Housing, Retail and Construction sectors are prominent on the platform with \>100 projects at the time of the snapshot, and this cluster contains more than 60% of each sector respectively.
+
+If we were to describe projects within this cluster, possible labels would be "**Typical/Normal project, Diverse country of origin, Basic needs**".

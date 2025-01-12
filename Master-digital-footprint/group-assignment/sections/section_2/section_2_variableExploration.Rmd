@@ -1,0 +1,248 @@
+---
+title: "Data: Variable Exploration"
+author: "Adam Chan, Khanh Chu, Shiyun Chen, Yuanling Zhu, Jing Jing He"
+date: "`r format(Sys.time(), '%Y-%m-%d at %H:%M:%S')`"
+output: 
+    bookdown::html_document2:
+        toc: true
+        toc_float: 
+            collapsed: false
+        number_sections: true
+        code_folding: show
+        theme: united
+        highlight: kate
+        fig_caption: yes
+        encoding: UTF-8
+        css: !expr here::here("style.css")
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r section_2_variableExploration, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidymodels)
+library(tidyverse)
+library(NbClust)
+library(GGally)
+library(ggdendro)
+library(purrr)
+library(stargazer)
+library(reactable)
+load(here::here("data_retrieval", "process_data.RData"))
+```
+
+### Variable Exploration: Descriptive Analysis {.tabset}
+
+#### Numeric Variables
+
+The numeric variables of interest collected are detailed below:
+
+``` {r class.source = 'fold-hide', echo=T, results='hide' }
+df_loans %>%
+  select(
+    "sentiment",
+    "lenderRepaymentTerm",
+    "loanAmount",
+    "daysSinceFundraising",
+    "fundedAmount",
+    "researchScore"
+  ) %>%
+  as.data.frame() %>%
+  stargazer(type = "html")
+```
+
+
+<div style="text-align: center;">
+  <table style="margin: 0 auto; border-collapse: collapse; width: 80%; border-spacing: 10px;">
+    <tr>
+      <td colspan="6" style="border-bottom: 1px solid black;"></td>
+    </tr>
+    <tr>
+      <td style="text-align: left; padding: 10px;">Statistic</td>
+      <td style="padding: 10px;">N</td>
+      <td style="padding: 10px;">Mean</td>
+      <td style="padding: 10px;">St. Dev.</td>
+      <td style="padding: 10px;">Min</td>
+      <td style="padding: 10px;">Max</td>
+    </tr>
+    <tr>
+      <td colspan="6" style="border-bottom: 1px solid black;"></td>
+    </tr>
+    <tr>
+      <td style="text-align: left; padding: 10px;">sentiment</td>
+      <td style="padding: 10px;">6,493</td>
+      <td style="padding: 10px;">7.280</td>
+      <td style="padding: 10px;">4.548</td>
+      <td style="padding: 10px;">0</td>
+      <td style="padding: 10px;">33</td>
+    </tr>
+    <tr>
+      <td style="text-align: left; padding: 10px;">lenderRepaymentTerm</td>
+      <td style="padding: 10px;">6,493</td>
+      <td style="padding: 10px;">15.096</td>
+      <td style="padding: 10px;">6.663</td>
+      <td style="padding: 10px;">5</td>
+      <td style="padding: 10px;">122</td>
+    </tr>
+    <tr>
+      <td style="text-align: left; padding: 10px;">loanAmount</td>
+      <td style="padding: 10px;">6,493</td>
+      <td style="padding: 10px;">1,427.518</td>
+      <td style="padding: 10px;">4,204.432</td>
+      <td style="padding: 10px;">100</td>
+      <td style="padding: 10px;">300,000</td>
+    </tr>
+    <tr>
+      <td style="text-align: left; padding: 10px;">daysSinceFundraising</td>
+      <td style="padding: 10px;">6,493</td>
+      <td style="padding: 10px;">14.505</td>
+      <td style="padding: 10px;">9.077</td>
+      <td style="padding: 10px;">0</td>
+      <td style="padding: 10px;">42</td>
+    </tr>
+    <tr>
+      <td style="text-align: left; padding: 10px;">fundedAmount</td>
+      <td style="padding: 10px;">6,493</td>
+      <td style="padding: 10px;">0.167</td>
+      <td style="padding: 10px;">0.189</td>
+      <td style="padding: 10px;">0.000</td>
+      <td style="padding: 10px;">1.000</td>
+    </tr>
+    <tr>
+      <td style="text-align: left; padding: 10px;">researchScore</td>
+      <td style="padding: 10px;">6,458</td>
+      <td style="padding: 10px;">6.926</td>
+      <td style="padding: 10px;">4.213</td>
+      <td style="padding: 10px;">0.000</td>
+      <td style="padding: 10px;">37.500</td>
+    </tr>
+    <tr>
+      <td colspan="6" style="border-bottom: 1px solid black;"></td>
+    </tr>
+  </table>
+</div>
+
+</br>
+
+Note that researchScore here refers to an internal score given by Kiva internally to determine alignment with social impact or effectiveness in achieving positive social outcomes. 
+
+```{r echo=T, warning=FALSE, class.source='fold-hide', results='hide'}
+df_loans_selected <- df_loans %>%
+  select(
+    sentiment,
+    lenderRepaymentTerm,
+    loanAmount,
+    daysSinceFundraising,
+    fundedAmount,
+    researchScore
+  ) %>%
+  as.data.frame()
+
+# Reshape the data to long format
+df_long <- df_loans_selected %>%
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "value")
+
+# Create the plot
+ggplot(df_long, aes(x = value)) +
+  geom_histogram(fill = "#f68060", alpha = .8, bins = 30) +
+  labs(title = "Histograms of Selected Variables") +
+  theme_minimal() +
+  theme_bw() +
+  facet_wrap(~ variable, nrow = 2, ncol = 3, scales = "free_x") 
+```
+
+
+#### Country
+
+The top 6 frequent country distribution table is as follows.
+
+```{r class.source = 'fold-hide' , warning=FALSE}
+df_loans %>% 
+  select(country) %>% 
+  count(country) %>% 
+  arrange(desc(n)) %>%
+  reactable::reactable(
+    rownames = FALSE,
+    defaultPageSize = 6,
+    showPageSizeOptions = F,
+    searchable = T,
+    compact = T,
+    paginateSubRows = T,
+    highlight = T,
+    bordered = T,
+    wrap = T,
+    resizable = T
+  )
+
+ggplot(df_loans, aes(x = country)) +
+    geom_bar(fill = "#f68060", alpha = .8, bins = 30) +
+    labs(title = paste("Bar plot of country")) +
+    theme_bw() +
+    coord_flip()
+```
+
+
+#### Sector
+
+The top 6 frequent sector distribution tables is as follows.
+
+```{r message=FALSE, warning=FALSE, class.source='fold-hide'}
+df_loans %>%
+  select(sector) %>%
+  count(sector) %>%
+  arrange(desc(n)) %>%
+  reactable::reactable(
+    rownames = FALSE,
+    defaultPageSize = 6,
+    showPageSizeOptions = F,
+    searchable = T,
+    compact = T,
+    paginateSubRows = T,
+    highlight = T,
+    bordered = T,
+    wrap = T,
+    resizable = T
+  )
+
+ggplot(df_loans, aes(x = sector)) +
+  geom_bar(fill = "#f68060",
+           alpha = .8,
+           width = .4) +
+  labs(title = paste("Bar plot of Sector")) +
+  theme_minimal() +
+  theme_bw() +
+  coord_flip() 
+```
+
+#### gender
+
+The gender distribution table is as follows. 
+
+```{r message=FALSE, warning=FALSE, class.source='fold-hide'}
+df_loans %>%
+  select(gender) %>%
+  count(gender) %>%
+  arrange(desc(n)) %>%
+  reactable::reactable(
+    rownames = FALSE,
+    defaultPageSize = 6,
+    showPageSizeOptions = F,
+    searchable = T,
+    compact = T,
+    paginateSubRows = T,
+    highlight = T,
+    bordered = T,
+    wrap = T,
+    resizable = T
+  )
+
+ggplot(df_loans, aes(x = gender)) +
+  labs(title = paste("Bar plot of Gender")) +
+  geom_bar(fill = "#f68060",
+           alpha = .8,
+           width = .4) +
+  theme_minimal() +
+  theme_bw() +
+  coord_flip() 
+```
+

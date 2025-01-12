@@ -1,0 +1,226 @@
+/* Redacted variables in listings can also be created with the alter table command: */
+ALTER TABLE listings add redacted_listing_id INTEGER;
+ALTER TABLE listings add redacted_host_id INTEGER;
+/*But for convenience of checking I opted to use DB Browser modify table function instead */
+
+/*Create tables in line with the ERD
+Note that both the redacted ids and original ids are columns in the table now so I can match them back in original dataset
+They are dropped later once data is fully implemented */
+CREATE TABLE "host" (
+    "redacted_host_id" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    "host_id" INTEGER,
+	"host_is_superhost" TEXT,
+    "host_total_listings_count" INTEGER
+);
+
+CREATE TABLE "listing_info" (
+    "redacted_listing_id" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+	"listing_id" INTEGER,
+    "redacted_host_id" INTEGER,
+    "neighbourhood_cleansed" TEXT,
+    "room_type" TEXT,
+    "accommodates" INTEGER,
+    "review_scores_rating" REAL,
+    "number_of_reviews" INTEGER,
+    "price_per_person" REAL,
+    "calendar_last_scraped" TEXT,
+    FOREIGN KEY("redacted_host_id") REFERENCES "host"("redacted_host_id")
+);
+
+CREATE TABLE "day_price" (
+    "redacted_listing_id" INTEGER,
+    "listing_id" INTEGER,
+    "date" TEXT,
+    "price" REAL,
+    PRIMARY KEY ("redacted_listing_id", "date"),
+	FOREIGN KEY("redacted_listing_id") REFERENCES "listing_info"("redacted_listing_id")
+);
+
+CREATE TABLE "special_day" (
+    "date" TEXT PRIMARY KEY NOT NULL UNIQUE,
+    "special_day" INTEGER,
+	FOREIGN KEY("date") REFERENCES special_day("date")
+);
+
+/*Port data from dataset into the ERD tables
+In these tables, primary key is left unfilled, since DB Browser will autoincrement them */
+
+INSERT INTO "host" (host_id, host_is_superhost, host_total_listings_count)
+SELECT DISTINCT host_id, host_is_superhost, host_total_listings_count
+FROM listings;
+
+UPDATE listings
+SET redacted_host_id = (
+    SELECT redacted_host_id
+    FROM host
+    WHERE listings.host_id = host.host_id); --Matching autoincremented host_id to dataset
+
+INSERT INTO "listing_info" (listing_id, redacted_host_id, neighbourhood_cleansed, room_type, accommodates, review_scores_rating, number_of_reviews, calendar_last_scraped)
+SELECT DISTINCT listing_id, redacted_host_id, neighbourhood_cleansed, room_type, accommodates, review_scores_rating, number_of_reviews, calendar_last_scraped
+FROM listings;
+
+Update listings
+set redacted_listing_id = (
+	Select redacted_listing_id
+	from listing_info
+	where listings.listing_id = listing_info.listing_id); --Matching autoincremented listing_id to dataset
+
+-- Calendar does not have redacted_host_id, so left join listing_info to include the variable in temporary relation 
+-- that day_price can use to populate
+with temp AS (
+    select listing_info.redacted_listing_id AS temp_redacted_ID, calendar.listing_id AS temp_ID, date, price 
+    from calendar left join listing_info on calendar.listing_id = listing_info.listing_id) 
+insert into day_price (redacted_listing_id, listing_id, date, price)
+select temp_redacted_ID, temp_id, date, price
+from temp;
+
+-- Manual processing of weekends & holidays for special_day
+INSERT INTO special_day (date, special_day)
+SELECT DISTINCT date,
+    CASE 
+        WHEN strftime('%w', date) IN ('0', '6') THEN 'Weekend'
+        ELSE 'Normal Day'
+    END
+FROM day_price;
+
+UPDATE special_day set special_day = "Holiday"
+WHERE date IN ('2022-11-01', '2022-11-11', '2022-12-25', '2022-12-26', '2023-01-01', '2023-04-07', '2023-04-10', '2023-05-01', 
+'2023-05-08', '2023-05-18', '2023-05-28', '2023-05-29', '2023-07-14', '2023-08-15'); --All national holidays
+
+UPDATE special_day set special_day = "Holiday"
+WHERE date IN ('2022-11-12', '2022-11-13', '2022-12-24', '2022-12-25', '2023-04-08', '2023-04-09', '2023-04-29', '2023-04-30', 
+'2023-05-06', '2023-05-07', '2023-05-27'); --Weekends next to a holiday
+
+/* Calculate the price per night per person of listing, using data from day_price
+Create temporary relation that contains price, and match listing ID from that relation to the listing info */  
+WITH temp_price as (SELECT day_price.redacted_listing_id, round(avg(price)/listing_info.accommodates, 2) AS price
+FROM listing_info NATURAL JOIN day_price
+Group by day_price.redacted_listing_id)
+
+UPDATE listing_info
+SET price_per_person = (SELECT price FROM temp_price WHERE temp_price.redacted_listing_id = listing_info.redacted_listing_id);
+
+/* Removing outliers, using standard deviation: 99.7% of values normally fall within 3SD of mean
+DB Browser doesn't have tools to calculate SD, so we have to do step-by-step by hand */
+SELECT round(avg(price_per_person),2) "mean"
+FROM listing_info;
+-- Mean (with outliers) is 70.16 --
+
+SELECT sum((price_per_person - 70.16) * (price_per_person - 70.16))/count(price_per_person)
+FROM listing_info;
+-- Variance is 17519.37223. DB Browser does not have square root function, but calculator returns 132.36
+
+/* Outliers removal
+Due to the way constraint was implemented, day_pricee id need to be removed first before listing_info */
+DELETE FROM day_price WHERE redacted_listing_id in (SELECT redacted_listing_id
+FROM listing_info
+WHERE price_per_person > (64.57 + 3 * 132.36) or price_per_person < (64.57 - 3 * 132.36));
+
+DELETE FROM listing_info WHERE redacted_listing_id in (SELECT redacted_listing_id
+FROM listing_info
+WHERE price_per_person > (64.57 + 3 * 132.36) or price_per_person < (64.57 - 3 * 132.36));
+
+/*Drop excess variables in ERD tables */
+alter table listing_info drop listing_id;
+alter table host drop host_id;
+alter table day_price drop listing_id;
+
+
+
+TASK 5 STARTS HERE
+/*Q1: Average price */
+SELECT round(avg(price_per_person),2) "mean"
+FROM listing_info;
+
+/*Q2: Average price on normal/weekends/holidays */
+Create index listing_accomm on listing_info (redacted_listing_id, accommodates);
+
+---Average price based on day type, assuming homogenous markup behavior
+with temp_price_by_day as (
+	Select listing_info.redacted_listing_id, avg(day_price.price)/listing_info.accommodates AS listing_price, special_day
+	from listing_info left join day_price on listing_info.redacted_listing_id = day_price.redacted_listing_id
+					  left join special_day on day_price.date = special_day.date
+	group by day_price.redacted_listing_id, special_day) -- Getting 3 average prices for each listing.
+	
+Select round(avg(listing_price),2) AS average_price, special_day AS type_of_day
+from temp_price_by_day
+group by special_day
+ORDER BY average_price ASC;
+
+--Average price based on day type, only for listings practicing markup behavior
+with temp_price_by_day as (
+	Select listing_info.redacted_listing_id AS id, avg(day_price.price)/listing_info.accommodates AS listing_price, special_day
+	from listing_info left join day_price on listing_info.redacted_listing_id = day_price.redacted_listing_id
+					  left join special_day on day_price.date = special_day.date
+	group by listing_info.redacted_listing_id, special_day.special_day), -- Getting 3 average prices for each listing
+
+markup_listing as (
+	select t.id, t.listing_price AS price, t.special_day
+	from temp_price_by_day LEFT JOIN temp_price_by_day as t On temp_price_by_day.id = t.id -- Self join the temporary relation, number of rows needed for comparison is minimum: count(*) * 3 
+	where temp_price_by_day.id = t.id AND temp_price_by_day.listing_price != t.listing_price -- compare each of three avg price from a listing with three pairs of avg price (incl. itself) 
+	group by t.id, t.special_day) -- De-duplicate
+
+--Can also check first how many listings in Paris have markup price behavior, to work back average price of listings with stable price
+--Select COUNT(DISTINCT id) From markup_listing;
+
+Select round(avg(price),2) AS average_price, special_day AS type_of_day
+from markup_listing
+group by special_day
+ORDER BY average_price ASC;
+
+/*Q3 & Q4: Average price by neighborhood and by room type
+Jointly considered as average price by room characteristics */
+Create index listing_characteristics on listing_info (redacted_listing_id, neighbourhood_cleansed, price_per_person, room_type);
+SELECT neighbourhood_cleansed, round(avg(price_per_person),2) "average_price", count(neighbourhood_cleansed)
+FROM listing_info
+group by neighbourhood_cleansed ORDER BY average_price ASC;
+
+Select room_type, round(avg(price_per_person),2) "average_price", count(room_type) "number_of_listings"
+FROM listing_info
+group by room_type ORDER BY average_price ASC;
+
+--Why is avg price of entire homes lower than private room? Include avg accommodation size to find price per night:
+--Select room_type, round(avg(price_per_person),2) "average_price", count(room_type) "number_of_listings", round(avg(accommodates),2) "Average accommodation"
+--FROM listing_info
+--group by room_type ORDER BY average_price ASC;
+
+/*Q5 & Q6: Average price based on whether host is superhost, or professional/casual.
+Jointly considered as host characteristic */
+Create index listing_host on listing_info (redacted_host_id, price_per_person);
+
+Select host_is_superhost, round(avg(price_per_person),2) "average_price"
+from listing_info left join host on listing_info.redacted_host_id = host.redacted_host_id
+group by host_is_superhost order by average_price ASC; 
+
+--If you want to check count of casual/professional host, add count(*) at end of SELECT (Spoiler: Ratio is 3:5, no irregularities)
+Select CASE
+	when host_total_listings_count = 1 then "Casual Host"
+	else "Professional Host"
+End as host_classification, round(avg(price_per_person),2) "average_price"
+from listing_info left join host on listing_info.redacted_host_id = host.redacted_host_id
+group by host_classification order by average_price ASC;
+
+/*Q7: Average price of popular listings against the rest */
+select avg(number_of_reviews)
+from listing_info
+where review_scores_rating IS NOT NULL;
+
+--Temporary relation of top 5% listings
+with top_listing as (
+	Select DISTINCT rank() OVER (ORDER BY review_scores_rating DESC, number_of_reviews DESC, price_per_person DESC) AS Ranking, redacted_listing_id, review_scores_rating, number_of_reviews, price_per_person
+	From listing_info
+	where number_of_reviews >= 20 AND review_scores_rating IS NOT NULL LIMIT 1621),
+
+--Temporary relation of the rest not in top 5%
+non_top_listing as (Select redacted_listing_id, price_per_person
+from listing_info
+where redacted_listing_id not in (select redacted_listing_id from top_listing))
+
+--Union to get the average price from both temporary relation, which means we can compare price of top 5% and the rest
+Select 'Top 5%' AS Category, round(avg(price_per_person),2) AS Price
+From top_listing
+
+UNION
+
+Select 'The rest' AS Category, round(avg(price_per_person),2) AS Price 
+From non_top_listing;

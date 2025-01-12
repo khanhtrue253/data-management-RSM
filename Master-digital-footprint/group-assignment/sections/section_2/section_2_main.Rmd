@@ -1,0 +1,201 @@
+---
+title: "Data"
+author: "Adam Chan, Khanh Chu, Shiyun Chen, Yuanling Zhu, Jing Jing He"
+date: "`r format(Sys.time(), '%Y-%m-%d at %H:%M:%S')`"
+output: 
+    bookdown::html_document2:
+        toc: true
+        toc_float: 
+            collapsed: false
+        number_sections: true
+        code_folding: show
+        theme: united
+        highlight: kate
+        fig_caption: yes
+        encoding: UTF-8
+        css: !expr here::here("style.css")
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup section_2, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+load(here::here("data_retrieval", "process_data.RData"))
+library(tidymodels)
+library(tidyverse)
+library(NbClust)
+library(GGally)
+library(ggdendro)
+library(purrr)
+library(stargazer)
+library(reactable)
+```
+
+## Data Acquisition
+
+For this study, we initially collected a comprehensive dataset through [Kiva API](https://api.kivaws.org/graphql) on May 15th, which included 6493 observations and 10 variables. These observations encompass a variety of attributes related to the projects, borrowers, and their engagement metrics. The 10 variables are described below.
+
+
+```{r class.source = 'fold-hide'}
+# Source: https://api.kivaws.org/graphql
+data.frame(
+  `Variable` = c(
+    "loan_id",
+    "sentiment",
+    "gender",
+    "lenderRepaymentTerm",
+    "loanAmount",
+    "daysSinceFundraising",
+    "fundedAmount",
+    "country",
+    "researchScore",
+    "sector"
+  ),
+  `Description` = c(
+    "Shows the loan ID.",
+    "Shows sentiment of description text, showing the degree of negativity or positivity in a text.",
+    "Shows the gender of the primary borrower or majority gender if group.",
+    "The number of months it will take the borrower to repay the loan.",
+    "The amount of this loan, as shown to lenders.",
+    "Number of days that have been passed since the fundraising date. Since the data acquisition date is May 15th 2024, it shows the difference between the start of the campagin and May 15th.",
+    "Shows the amount funded.",
+    "The country of lender.",
+    "Refers to an internal score given by Kiva internally to determine alignment with social impact or effectiveness in achieving positive social outcomes.",
+    "A sector is a broad category for a loan, e.g. Agriculture, Arts, Clothing. Sectors are subdivided further by activities."
+    
+  )) %>%
+  reactable::reactable(
+    rownames = FALSE,
+    defaultPageSize = 16,
+    showPageSizeOptions = F,
+    searchable = T,
+    compact = T,
+    paginateSubRows = T,
+    highlight = T,
+    bordered = T,
+    wrap = T,
+    resizable = T
+  )
+```
+
+### Data Request Kiva API
+
+To request data via the [Kiva API](https://api.kivaws.org/graphql), we first aimed to create a query to filter for the loans' ID that met our criteria, i.e. maximizing the number of observations subject to the above mentioned variables (see details below).
+
+<details>
+<summary> **Query Kiva API to get Unique IDs** </summary>
+
+```{r Quary Kiva API Unique ID, eval = FALSE}
+{
+  lend {
+    loans (sortBy: newest) {
+      totalCount
+      values {
+        id
+      }
+    }
+  }
+}
+```
+
+This is performed in the `collect_data_uniqueID.R` file.
+
+</details>
+<br>
+
+As the request was placed we found that only a maximum of 100 observations could be obtained, which is not equal to the `total count` of such filter. Therefore, to override this limitation, we used a loop in combination with the `limit` and `offset` arguments in the query to request the total number of unique IDs (see `collect_data_uniqueID.R` file). These are saved in a vector, and were used to find the remaining variable values via the query that is depicted below (see `collect_data_API.R` file).
+
+
+<details>
+
+<summary> **Query Kiva API to get Values based on Unique IDs** </summary>
+</br>
+
+Note: The query below with the variables that are requested are not the same as the ones mentioned before. Here our goal was to maximize information, which then is further processed in the next section.
+
+```{r Query Kiva API, eval = FALSE}
+{
+  lend {
+    loan(id:{loan_id}) { # loan_id is variable used to loop through 
+      id                  # the unique IDs      
+      description
+      disbursalDate
+      fundraisingDate
+      raisedDate
+      plannedExpirationDate
+      status
+      gender
+      lenderRepaymentTerm
+      use
+      geocode {
+        city
+        state
+        postalCode
+        latitude
+        longitude
+        country {
+          name
+          isoCode
+          region
+          ppp
+          numLoansFundraising
+          fundsLentInCountry
+        }
+      }
+      name
+      video {
+        thumbnailImageId
+        youtubeId
+      }
+      loanAmount
+      repaymentInterval
+      delinquent
+      hasCurrencyExchangeLossLenders
+      loanFundraisingInfo {
+        fundedAmount
+        reservedAmount
+        isExpiringSoon
+      }
+      researchScore
+      image {
+        url(presetSize:small)
+      }
+      activity {
+        name
+      }
+      sector {
+        name
+      }
+    }
+  }
+}
+```
+
+This is performed in the `collect_data_API.R` file.
+
+</details>
+<br> 
+
+These results are saved in JSON format, which need to be tidied in order to be usable for further analysis. 
+
+### Data Processing
+
+To transform our data into [tidy format](https://r4ds.had.co.nz/tidy-data.html), we use the packages `httr2` and `tidyverse`. Here, the most important aspect is to extract the elements in the lists using the `map()` function the `purrr` package from `tidyverse`. Some elements are in nested lists, which are extracted via seperate functions (see `f_aux_functions.R` file). The resulting data are saved in a data frame, and, if needed, the classes of variables are changed to accommodate them (see `process_data.R` file). Furthermore, features are engineered to accommodate analysis and lastly, the 10 relevant variables (see section above) are selected.
+
+```{r, child=here::here("sections","section_2", "section_2_variableExploration.Rmd")}
+```
+
+
+## Cluster Analysis
+
+Given the limitations of our dataset, which only included a small number of completed projects, it was impractical to construct predictive models. As a result, we shifted our approach to cluster analysis to identify patterns and relationships within the data. This method allows us to gain insights into the dynamics and key factors influencing Kiva's fundraising process.
+
+### Analysis
+```{r, child=here::here("sections","section_2", "section_2_clusterAnalysis_code.Rmd")}
+```
+
+### Interpretation {.tabset}
+```{r, child=here::here("sections","section_2", "section_2_clusterAnalysis_interpretation.Rmd")}
+```
+
+

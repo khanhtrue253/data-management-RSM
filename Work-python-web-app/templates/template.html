@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SchoolTalent's Tutor Map</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<style>
+    html, body {
+        font-family: Arial, sans-serif;
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+        width: 100vw;
+        overflow-x: hidden;
+    }
+
+    h1, h2 {
+        text-align: center;
+        margin-bottom: 2px;
+        font-weight: bold;
+    }
+
+    h1 {
+        font-size: 35px;
+        font-weight: bold;
+    }
+
+    h2 {
+        margin-bottom: 7px;
+        font-weight: bold;
+    }
+
+    form {
+        text-align: center;
+        margin: 12px;
+    }
+
+    label {
+        font-weight: bold;
+    }
+
+    select, input[type="number"] {
+        height: 20px;
+    }
+
+    .container {
+        display: flex;
+        gap: 0;
+        max-width: 100% !important;
+        padding: 0;
+        margin-left: 0;
+        margin-right: 0;
+    }
+
+    .filters-container {
+        width: 70%;
+        display: flex;
+        flex-direction: column;
+        padding:0;
+    }
+
+    .color-legend {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+    }
+
+
+    .blue-text { color: blue;font-size: 12px; margin-left: 65%;}
+    .red-text { color: red;font-size: 12px;  margin-left: 65%;}
+    .orange-text { color: orange;font-size: 12px;  margin-left: 65%;}
+    .green-text { color: green; font-size: 12px; margin-left: 65%;}
+
+    .filters-bottom {
+        margin-top: 3px;
+        flex-grow: 1;
+    }
+
+    fieldset {
+        padding: 10px;
+        border: 1px solid #ccc;
+    }
+
+    .inline-checkboxes {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+    }
+
+    .checkbox-container {
+        display: block;
+        width: 100%;
+        text-align: left;
+    }
+
+    .checkbox-container > label {
+        font-weight: bold;
+        font-size: 14px;
+        margin-bottom: 3px;
+        text-align: left;
+    }
+    
+    .checkbox-container div {
+        display: block;
+        width: 100%;
+    }
+    
+    .checkbox-container div label {
+        font-weight: normal;
+        font-size: 14px; /* Smaller font for options */
+        display: inline-flex;
+        align-items: left;
+    }
+    
+    input[type="checkbox"] {
+        transform: scale(0.8);
+        margin-right: 2px;
+    }
+
+    .input-container {
+        margin-bottom: 10px;
+        text-align: left;
+    }
+    
+    .input-container > label {
+        font-weight: bold;
+        font-size: 14px;
+        margin-bottom: 2px;
+        text-align: left;
+    }
+
+    .input-container > input {
+        font-size: 12px;
+        padding: 0px;
+        width: 50%;
+        text-align: left;
+    }
+
+    .submit-button {
+        align-self: left;
+        margin-top: 5px;
+        display: inline-block;
+        font-size: 15px;
+    }
+
+    .map-wrapper {
+        width: 60%;
+        height: 60%;
+        padding:0;
+        display: flex;
+    }
+
+    .map-container {
+        width: 100%;
+        height: 650px;
+        margin: 10px;
+        margin-top: 0px;
+        border: 2px solid #04e;
+        overflow: hidden;
+        position: relative;
+    }
+    #map {
+        width: 100%;
+        height: 100%;
+    }
+    .highlight {
+            border: 2px solid red;
+            background-color: rgba(255, 0, 0, 0.2);
+    }
+    .leaflet-container {
+        height: 100%;
+        width: 100%;
+        margin: 0px;
+    }
+</style>
+
+<body>
+    <h1 style="font-weight: bold;">SchoolTalent's Tutor Map (Visualization)</h1>
+    <h2> Khanh Chu <i>© 2024 SchoolTalent</i></h2>
+
+    <form method="POST">
+        <label for="country">Select Country:</label>
+        <select id="country" name="country" required>
+            <option value="">--Select a country--</option>
+            {% for country in countries %}
+                <option value="{{ country }}" {% if country == selected_country %}selected{% endif %}>{{ country }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit">Apply Country</button>
+    </form>
+
+    {% if df_html %}
+    <div class="container">
+        <!-- Left section for filters -->
+        <div class="filters-container">
+          
+          <div class="color-legend">
+          <!---
+                <div class="line">
+                    <span class="blue-text">Tutor has < 5.0 lessons per relation.</span>
+                </div>
+                <div class="line">
+                    <span class="red-text">Tutor has >= 5.0, and in bottom 25% lessons per relation.</span>
+                </div>
+                <div class="line">
+                    <span class="orange-text">Tutor has >= 5.0, and in 25%-75% lessons per relation.</span>
+                </div>
+                <div class="line">
+                    <span class="green-text">Tutor has >= 5.0, and in top 75% lessons per relation.</span>
+                </div>
+            -->
+            </div>
+            
+            <form method="POST">
+                <input type="hidden" name="country" value="{{ selected_country }}">
+                <fieldset>
+                    <legend style="text-align:left">Tick appropriate boxes, then click 'Apply Filters'</legend>
+                    <div class="inline-checkboxes">
+                        <div class="checkbox-container">
+                            <label>School Levels:</label>
+                            <div>
+                                {% for level in school_levels %}
+                                    <label>
+                                        <input type="checkbox" name="school_level" value="{{ level }}" {% if level in selected_school_levels %}checked{% endif %}>
+                                        {{ level }}
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="checkbox-container">
+                            <label>School Years:</label>
+                            <div>
+                                {% for year in school_years %}
+                                    <label>
+                                        <input type="checkbox" name="school_year" value="{{ year }}" {% if year in selected_school_years %}checked{% endif %}>
+                                        {{ year }}
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="checkbox-container">
+                            <label>School Types:</label>
+                            <div>
+                                {% for type in school_types %}
+                                    <label>
+                                        <input type="checkbox" name="school_type" value="{{ type }}" {% if type in selected_school_types %}checked{% endif %}>
+                                        {{ type }}
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="checkbox-container">
+                            <label>Courses:</label>
+                            <div>
+                                {% for course in course_names %}
+                                    <label>
+                                        <input type="checkbox" name="course_name" value="{{ course }}" {% if course in selected_course_names %}checked{% endif %}>
+                                        {{ course }}
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="checkbox-container">
+                            <label>Tutor Availability [Available for new students]:</label>
+                            <div>
+                                {% for avail in availability %}
+                                    <label>
+                                        <input type="checkbox" name="availability" value="{{ avail }}" {% if avail in selected_availabilities %}checked{% endif %}>
+                                        {{ avail }}
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="checkbox-container">
+                            <label>Tutor Types:</label>
+                            <div>
+                                {% for type in tutor_types %}
+                                    <label>
+                                        <input type="checkbox" name="tutor_types" value="{{ type }}" {% if type in selected_tutor_types %}checked{% endif %}>
+                                        {{ type }}
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        
+                        <div class="checkbox-container">
+                            <label>Excluded from search:</label>
+                            <div>
+                                {% for ex in excluded %}
+                                    <label>
+                                        <input type="checkbox" name="excluded" value="{{ ex }}" {% if ex in selected_excluded %}checked{% endif %}>
+                                        {{ ex }}
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        
+                        <div class="input-container">
+                            <label for="lessons_per_relation">Min accepted lessons per relation:</label>
+                            <input id="lessons_per_relation" name="lessons_per_relation" type="number" step="any" placeholder="Enter a float value (e.g., 4.5)">
+                        </div>
+                        
+                        <div class="input-container">
+                          <label for="start_date">Latest lesson between ... and ... (inclusive): </label>
+                          <div class="date-range-container" style="display: flex; gap: 10px;">
+                              <input id="start_date" name="start_date" type="date" placeholder="Start date of period" value="{{ start_date }}">
+                              <input id="end_date" name="end_date" type="date" placeholder="End date" value="{{ end_date }}">
+                           </div>
+                        </div>
+                        
+                        <div class="checkbox-container">
+                            <label>Tutors with no relations?</label>
+                            <div>
+                                <label>
+                                    <input type="checkbox" name="no_lesson_tutor" value="Yes" {% if "Yes" in selected_availabilities %}checked{% endif %}>
+                                    Yes
+                                </label>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="submit-button">Apply Filters</button>
+                    </div>
+                </fieldset>
+            </form>
+        </div>
+
+        <!-- Right section for the map -->
+        <div class="map-wrapper">
+            <div class="map-container">
+                <div id="map">
+                    {{ map_html|safe }}
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    // Wait for the DOM to be fully loaded
+document.addEventListener('DOMContentLoaded', function () {
+    // Access the Leaflet map object created by Folium
+    var map = Object.values(window).find(obj => obj instanceof L.Map);
+
+    if (!map) {
+        console.error("Leaflet map not found!");
+        return;
+    }
+
+    // Arrays to store the markers and circles
+    var markers = [];
+    var circles = [];
+
+    // Loop through all layers to attach interactivity to markers and circles
+    map.eachLayer(function (layer) {
+        if (layer instanceof L.Marker) {
+            markers.push(layer);  // Store markers
+        }
+        if (layer instanceof L.Circle) {
+            circles.push(layer);  // Store circles
+        }
+    });
+
+    // Attach events to markers
+    markers.forEach(function (marker) {
+        marker.on('click', function () {
+            var tutorId = marker.options.customId; // Access the custom 'id' from the marker options
+            console.log("Marker clicked. Tutor ID: ", tutorId);
+
+            // Find the corresponding circle by the 'tutor' ID
+            var matchingCircle = circles.find(function (circle) {
+                return circle.options.customId === tutorId; // Match based on tutor ID
+            });
+
+            if (matchingCircle) {
+                console.log("Found matching circle for marker.");
+                matchingCircle.setStyle({
+                    color: 'purple',
+                    fillColor: 'purple',
+                    fillOpacity: 0.5
+                });
+            } else {
+                console.log("No matching circle found for marker.");
+            }
+        });
+    });
+
+    // Attach events to circles
+    circles.forEach(function (circle) {
+        let defaultColor = circle.options.color;
+        console.log("Circle found. Default color: ", defaultColor);
+
+        // Store the tutor id directly as a custom property
+        circle.tutorId = circle.options.customId; // Store ID on the circle object itself
+
+        circle.on('click', function () {
+            var tutorId = circle.tutorId; // Access tutor ID directly from the circle object
+            console.log("Circle clicked. Tutor ID: ", tutorId);
+
+            // Change circle's style on click
+            circle.setStyle({
+                color: 'purple',
+                fillColor: 'purple',
+                fillOpacity: 0.5,
+            });
+
+            // Highlight the corresponding marker
+            var matchingMarker = markers.find(function (marker) {
+                return marker.options.customId === tutorId; // Match based on tutor ID
+            });
+
+            if (matchingMarker) {
+                console.log("Found matching marker for circle.");
+            } else {
+                console.log("No matching marker found for circle.");
+            }
+        });
+
+        // Reset circle style on mouseout
+        circle.on('mouseout', function () {
+            console.log("Mouse out of circle. Resetting style.");
+            circle.setStyle({
+                color: defaultColor,
+                fillColor: defaultColor,
+                fillOpacity: 0,
+            });
+        });
+    });
+});
+</script>
+
+
+    
+{% endif %}
+
+
+<!---
+    {% if df_html %}
+    <h1> Tutor Information <i>(Filtered Data)</i> </h1>
+    <div id="dataframe">
+        {{ df_html|safe }}  <!-- Render the DataFrame HTML -->
+    </div>
+    {% endif %}
+
+</body>
+</html>
