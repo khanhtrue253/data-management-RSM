@@ -221,7 +221,6 @@ def index():
                           Excluded: {row['excluded_from_search']}<br><br>
                           Total lessons: {row['total_lessons']}<br><br>
                           Per relation: {row['lessons_per_relation']} lesson(s)<br><br>
-                          Link: <a href="{ 'https://bijlesaanhuis.nl/profiel/' if row['country'] == 'nl' else 'https://lernigo.de/profil/' }{row['tutor']}" target="_blank">Profile</a>
                           </div>""",                        
                         #Color
                         #color=row['quantile_labels'],
@@ -238,7 +237,6 @@ def index():
                           Excluded: {row['excluded_from_search']}<br><br>
                           Total lessons: {row['total_lessons']}<br><br>
                           Per relation: {row['lessons_per_relation']} lesson(s)<br><br>
-                          Link: <a href="{ 'https://bijlesaanhuis.nl/profiel/' if row['country'] == 'nl' else 'https://lernigo.de/profil/' }{row['tutor']}" target="_blank">Profile</a>
                           </div>""",                      
                         icon=folium.Icon(color='red', icon='info-sign'),
                     ).add_to(tutors_map)
