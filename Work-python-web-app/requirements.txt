@@ -1,3 +1,4 @@
 Flask
 folium
 pandas
+gunicorn==20.1.0

@@ -2,6 +2,7 @@ from flask import Flask, render_template, request
 from datetime import date, datetime
 import pandas as pd
 import folium
+import os
 
 app = Flask(__name__)
 
@@ -278,4 +279,4 @@ def index():
                            df_html=df_html)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
